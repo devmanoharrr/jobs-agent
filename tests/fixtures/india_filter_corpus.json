@@ -1,0 +1,56 @@
+[
+  {"name": "bengaluru", "locations": ["Bengaluru"], "expected": "india"},
+  {"name": "karnataka", "locations": ["Karnataka"], "expected": "india"},
+  {"name": "india", "locations": ["India"], "expected": "india"},
+  {"name": "bangalore alias", "locations": ["Bangalore"], "expected": "india"},
+  {"name": "bombay alias", "locations": ["Bombay"], "expected": "india"},
+  {"name": "gurgaon alias", "locations": ["Gurgaon"], "expected": "india"},
+  {"name": "groww style office", "locations": ["Bengaluru-VTP, India"], "expected": "india"},
+  {"name": "hyderabad lowercase", "locations": ["hyderabad"], "expected": "india"},
+  {"name": "mumbai and london", "locations": ["London", "Mumbai"], "expected": "india"},
+  {"name": "country code in", "locations": ["Remote"], "country_code": "IN", "expected": "india"},
+  {"name": "remote india location", "locations": ["Remote - India"], "expected": "india"},
+  {
+    "name": "candidates in india",
+    "locations": ["Remote"],
+    "description": "Open to candidates in India.",
+    "expected": "remote_india"
+  },
+  {
+    "name": "india only",
+    "locations": ["Work from home"],
+    "description": "This role is India only.",
+    "expected": "remote_india"
+  },
+  {"name": "san francisco", "locations": ["San Francisco, United States"], "expected": "not_india"},
+  {"name": "new york", "locations": ["New York, NY"], "expected": "not_india"},
+  {"name": "us only remote", "locations": ["Remote - US only"], "expected": "not_india"},
+  {"name": "country code us", "locations": ["Remote"], "country_code": "US", "expected": "not_india"},
+  {"name": "athens greece", "locations": ["Athens, Attica, Greece"], "expected": "not_india"},
+  {"name": "london", "locations": ["London, United Kingdom"], "expected": "not_india"},
+  {
+    "name": "customers in india from us office",
+    "locations": ["San Francisco, CA"],
+    "description": "We serve customers in India from our US headquarters.",
+    "expected": "not_india"
+  },
+  {
+    "name": "excluding india",
+    "locations": ["Remote"],
+    "description": "Worldwide, excluding India.",
+    "expected": "not_india"
+  },
+  {"name": "indianapolis", "locations": ["Indianapolis, IN"], "expected": "not_india"},
+  {"name": "punjab pakistan", "locations": ["Lahore, Punjab, Pakistan"], "expected": "not_india"},
+  {"name": "remote", "locations": ["Remote"], "expected": "unknown_remote"},
+  {"name": "worldwide", "locations": ["Worldwide"], "expected": "unknown_remote"},
+  {"name": "anywhere", "locations": ["Anywhere"], "expected": "unknown_remote"},
+  {
+    "name": "fully remote description",
+    "locations": [],
+    "description": "This is a fully remote position.",
+    "expected": "unknown_remote"
+  },
+  {"name": "no location", "locations": [], "title": "Software Engineer", "expected": "unknown"},
+  {"name": "unspecified office", "locations": ["HQ"], "expected": "unknown"}
+]
