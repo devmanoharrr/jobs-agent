@@ -1,9 +1,5 @@
 # India Job Ingestion Agent
 
-Local demo of a source-driven job ingestion engine. V1 runs on one laptop with free software.
-
-This repository is being built one blueprint step at a time. **Steps 1–15 are in place** (foundation through the demo dashboard). See [PROGRESS.md](PROGRESS.md) for what is done and what is left.
-
 ## Step 1 — what is running
 
 - Python 3.12 virtualenv and project dependencies
