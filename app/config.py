@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     adzuna_app_key: str = ""
     crawl_concurrency: int = 5
     request_timeout_seconds: int = 20
+    jobs_agent_token: str = ""
 
 
 settings = Settings()

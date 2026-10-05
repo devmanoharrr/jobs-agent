@@ -14,6 +14,7 @@ from app.db import get_db
 from app.models.job import Job
 from app.models.source import Source
 from app.services.demo_actions import add_board, demo_status, start_scrape, start_seed, start_source_fetch
+from app.services.jobi_sync import BASE_URLS, JobiSyncError, sync_table_ready, transfer, waiting_count
 from app.services.job_service import (
     get_published_job,
     list_jobs,
@@ -81,6 +82,8 @@ def dashboard(
         page=current,
         ready=ready,
         fetched=fetched,
+        jobi_waiting=(waiting_count(db, "local"), waiting_count(db, "prod")),
+        jobi_ready=sync_table_ready(db),
     )
     headers = {"Refresh": "8"} if running else None
     return HTMLResponse(page_html, headers=headers)
@@ -127,6 +130,17 @@ def seed_sources(request: Request) -> RedirectResponse:
     return RedirectResponse(f"/?notice={quote(message)}", status_code=303)
 
 
+@router.post("/jobi/post")
+def post_to_jobi(request: Request, db: Session = Depends(get_db)) -> RedirectResponse:
+    fields = _form(request)
+    publish = fields.get("publish") == "true"
+    try:
+        message = transfer(db, target=fields.get("target", ""), publish=publish)
+    except JobiSyncError as exc:
+        message = str(exc)
+    return RedirectResponse(f"/?notice={quote(message)}", status_code=303)
+
+
 @router.post("/sources/add")
 def create_source(request: Request, db: Session = Depends(get_db)) -> RedirectResponse:
     fields = _form(request)
@@ -160,6 +174,8 @@ def _page(
     page: int = 1,
     ready: list | None = None,
     fetched: bool = False,
+    jobi_waiting: tuple[int, int] = (0, 0),
+    jobi_ready: bool = True,
 ) -> str:
     if jobs:
         jobs_block = _jobs_table(jobs)
@@ -176,6 +192,7 @@ def _page(
     banner = _banner(notice, scraping, scrape_message)
     body = f"""
 {banner}
+{_jobi_block(jobi_waiting, jobi_ready)}
 <section class="counts">
   <div><strong>{_num(totals["jobs"]["active"])}</strong><span>Active jobs</span></div>
   <div><strong>{_num(total_jobs)}</strong><span>Matching jobs</span></div>
@@ -272,6 +289,46 @@ def _layout(title: str, body: str, scraping: bool) -> str:
 </body>
 </html>
 """
+
+
+def _jobi_block(waiting: tuple[int, int], ready: bool = True) -> str:
+    local_waiting, prod_waiting = waiting
+    sentence = _waiting_sentence(local_waiting, prod_waiting)
+    if not ready:
+        sentence = "Run alembic upgrade head before posting to Jobi."
+    banner = f"<p class='banner'>{_text(sentence)}</p>" if sentence else ""
+    return f"""
+<section>
+  <div class="section-head"><h2>Post to Jobi</h2></div>
+  {banner}
+  <form class="picker" method="post" action="/jobi/post">
+    <p class="meta">Companies go first. Jobs stay waiting when Jobi skips the company.</p>
+    <label class="pick"><input type="radio" name="target" value="local" checked><span>Local — {_text(BASE_URLS["local"])}. {_num(local_waiting)} new waiting.</span></label>
+    <label class="pick"><input type="radio" name="target" value="prod"><span>Prod — {_text(BASE_URLS["prod"])}. {_num(prod_waiting)} new waiting.</span></label>
+    <label class="pick"><input type="checkbox" name="publish" value="true"><span>Publish new companies</span></label>
+    <button type="submit">Start posting</button>
+  </form>
+</section>
+"""
+
+
+def _waiting_sentence(local_count: int, prod_count: int) -> str:
+    parts = []
+    if local_count:
+        parts.append(f"{_job_phrase(local_count)} waiting to post to Jobi local")
+    if prod_count:
+        parts.append(f"{_job_phrase(prod_count)} waiting to post to Jobi prod")
+    if not parts:
+        return ""
+    if len(parts) == 1:
+        return parts[0] + "."
+    return f"{parts[0]}, and {parts[1]}."
+
+
+def _job_phrase(count: int) -> str:
+    if count == 1:
+        return "1 new job is"
+    return f"{count} new jobs are"
 
 
 def _banner(notice: str, scraping: bool, scrape_message: str) -> str:

@@ -4,12 +4,12 @@ from datetime import datetime, timezone
 from sqlalchemy import inspect
 
 from app.db import SessionLocal, engine
-from app.models import AiBudget, AiCache, CrawlRun, Job, JobSource, RawJob, Source
+from app.models import AiBudget, AiCache, CrawlRun, Job, JobiSync, JobSource, RawJob, Source
 
 
 def test_source_and_job_columns_match_database() -> None:
     inspector = inspect(engine)
-    for model in (Source, Job, RawJob, JobSource, CrawlRun, AiCache, AiBudget):
+    for model in (Source, Job, RawJob, JobSource, CrawlRun, AiCache, AiBudget, JobiSync):
         db_columns = {column["name"] for column in inspector.get_columns(model.__tablename__)}
         model_columns = {column.name for column in model.__table__.columns}
         assert model_columns == db_columns

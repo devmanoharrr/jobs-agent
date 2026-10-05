@@ -80,6 +80,8 @@ def test_dashboard_shows_sources_counts_jobs_and_failures() -> None:
         assert "Hidden" not in body
         assert 'href="https://example.com/apply"' in body
         assert "Add source" in body
+        assert "Start posting" in body
+        assert "Post to Jobi" in body
         assert "Fetch sources" in body
         assert "Next" in body
         page_two = client.get("/?page=2")
