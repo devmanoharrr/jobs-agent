@@ -129,6 +129,36 @@ def test_empty_dashboard_states_are_explicit() -> None:
     assert "No failed crawls." in response.text
 
 
+def test_scrape_all_starts_every_enabled_source(monkeypatch) -> None:
+    captured: dict[str, list] = {}
+
+    def fake(ids: list[uuid.UUID]) -> str:
+        captured["ids"] = ids
+        return "Scraping sources."
+
+    monkeypatch.setattr("app.api.dashboard.start_scrape", fake)
+    client = TestClient(app)
+    page = client.get("/")
+    assert "Scrape all" in page.text
+    assert 'action="/scrape"' in page.text
+
+    response = client.post("/scrape", data={}, follow_redirects=False)
+    assert response.status_code == 303
+    assert "Scraping" in response.headers["location"]
+
+    session = SessionLocal()
+    try:
+        enabled = [
+            source.id
+            for source in session.scalars(select(Source).order_by(Source.source_type.asc(), Source.external_key.asc()))
+            if source.enabled
+        ]
+    finally:
+        session.close()
+    assert captured["ids"] == enabled
+    assert enabled
+
+
 def test_unknown_source_scrape_is_not_found() -> None:
     client = TestClient(app)
     response = client.post("/scrape", data={"source_id": str(uuid.uuid4())})

@@ -230,9 +230,14 @@ def _page(
 <section>
   <div class="section-head">
     <h2>Sources</h2>
-    <form method="post" action="/sources/fetch">
-      <button type="submit">Fetch sources</button>
-    </form>
+    <div class="actions">
+      <form method="post" action="/scrape">
+        <button type="submit">Scrape all</button>
+      </form>
+      <form method="post" action="/sources/fetch">
+        <button class="ghost" type="submit">Fetch sources</button>
+      </form>
+    </div>
   </div>
   {_ready_block(ready or [], fetched)}
   <div class="wrap">{_sources_table(sources)}</div>
@@ -338,6 +343,8 @@ def _layout(title: str, body: str, scraping: bool) -> str:
     .counts strong {{ display: block; font-size: 1.35rem; }}
     .counts span, .meta, .section-head p, .empty {{ color: #5c564e; font-family: system-ui, sans-serif; font-size: 0.9rem; }}
     .section-head {{ display: flex; justify-content: space-between; gap: 12px; align-items: center; margin: 22px 0 8px; }}
+    .actions {{ display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }}
+    .actions form {{ margin: 0; }}
     .picker {{ display: grid; gap: 8px; background: #fff; border: 1px solid #e4ddd2; border-radius: 12px; padding: 12px 14px; margin: 0 0 14px; }}
     label.pick {{ display: flex; flex-direction: row; align-items: center; gap: 10px; color: #1c1915; font-size: 0.95rem; }}
     .pager {{ display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 12px 0 0; font-family: system-ui, sans-serif; }}
