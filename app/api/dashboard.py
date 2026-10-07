@@ -7,14 +7,22 @@ from urllib.parse import parse_qs, quote, urlencode
 
 import anyio
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.db import get_db
 from app.models.job import Job
 from app.models.source import Source
 from app.services.demo_actions import add_board, demo_status, start_scrape, start_seed, start_source_fetch
-from app.services.jobi_sync import BASE_URLS, JobiSyncError, sync_table_ready, transfer, waiting_count
+from app.services.jobi_sync import (
+    BASE_URLS,
+    JobiSyncError,
+    sync_table_ready,
+    transfer,
+    unstructured_count,
+    waiting_count,
+)
 from app.services.job_service import (
     get_published_job,
     list_jobs,
@@ -84,6 +92,7 @@ def dashboard(
         fetched=fetched,
         jobi_waiting=(waiting_count(db, "local"), waiting_count(db, "prod")),
         jobi_ready=sync_table_ready(db),
+        unstructured=unstructured_count(db),
     )
     headers = {"Refresh": "8"} if running else None
     return HTMLResponse(page_html, headers=headers)
@@ -95,6 +104,21 @@ def posting(job_id: uuid.UUID, db: Session = Depends(get_db)) -> HTMLResponse:
     if job is None:
         return HTMLResponse(_layout("Posting", "<p class='empty'>This posting is not published.</p>", False), status_code=404)
     return HTMLResponse(_layout(job.title_original, _detail(job), False))
+
+
+@router.get("/postings/{job_id}/trace")
+def posting_trace(job_id: uuid.UUID, db: Session = Depends(get_db)) -> JSONResponse:
+    job = get_published_job(db, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Posting not found")
+    steps = job.pipeline_trace if isinstance(job.pipeline_trace, list) else []
+    return JSONResponse(
+        {
+            "title": job.title_original,
+            "structure_status": job.structure_status,
+            "steps": steps,
+        }
+    )
 
 
 @router.post("/scrape")
@@ -176,6 +200,7 @@ def _page(
     fetched: bool = False,
     jobi_waiting: tuple[int, int] = (0, 0),
     jobi_ready: bool = True,
+    unstructured: int = 0,
 ) -> str:
     if jobs:
         jobs_block = _jobs_table(jobs)
@@ -192,7 +217,7 @@ def _page(
     banner = _banner(notice, scraping, scrape_message)
     body = f"""
 {banner}
-{_jobi_block(jobi_waiting, jobi_ready)}
+{_jobi_block(jobi_waiting, jobi_ready, unstructured)}
 <section class="counts">
   <div><strong>{_num(totals["jobs"]["active"])}</strong><span>Active jobs</span></div>
   <div><strong>{_num(total_jobs)}</strong><span>Matching jobs</span></div>
@@ -237,6 +262,60 @@ def _layout(title: str, body: str, scraping: bool) -> str:
   <meta name="viewport" content="width=device-width, initial-scale=1">
   {refresh}
   <title>{_text(title)}</title>
+  <script>
+    document.addEventListener("DOMContentLoaded", function () {{
+      var dialog = document.getElementById("trace");
+      var body = document.getElementById("trace-body");
+      var heading = document.getElementById("trace-title");
+      document.addEventListener("click", function (event) {{
+        var button = event.target.closest("[data-trace-url]");
+        if (!button || !dialog || !body) return;
+        heading.textContent = "What happened";
+        body.replaceChildren();
+        var loading = document.createElement("p");
+        loading.textContent = "Loading the trail…";
+        body.append(loading);
+        dialog.showModal();
+        fetch(button.getAttribute("data-trace-url"))
+          .then(function (response) {{
+            if (!response.ok) throw new Error("This trail is not available.");
+            return response.json();
+          }})
+          .then(function (data) {{
+            heading.textContent = data.title || "What happened";
+            body.replaceChildren();
+            var status = document.createElement("p");
+            status.className = "meta";
+            status.textContent = "Structure: " + (data.structure_status || "pending");
+            body.append(status);
+            var steps = Array.isArray(data.steps) ? data.steps : [];
+            if (!steps.length) {{
+              var empty = document.createElement("p");
+              empty.textContent = "No trail recorded for this posting.";
+              body.append(empty);
+              return;
+            }}
+            steps.forEach(function (step) {{
+              var section = document.createElement("section");
+              var name = document.createElement("h3");
+              name.textContent = step.step || "step";
+              var pre = document.createElement("pre");
+              pre.textContent = JSON.stringify(step, null, 2);
+              section.append(name, pre);
+              body.append(section);
+            }});
+          }})
+          .catch(function (error) {{
+            body.replaceChildren();
+            var failed = document.createElement("p");
+            failed.textContent = error.message || "Could not load the trail.";
+            body.append(failed);
+          }});
+      }});
+      var close = document.getElementById("trace-close");
+      if (close) close.addEventListener("click", function () {{ dialog.close(); }});
+    }});
+  </script>
   <style>
     :root {{ color-scheme: light; }}
     body {{ margin: 0; font: 16px/1.45 "Iowan Old Style", Palatino, Georgia, serif; background: #f3efe6; color: #1c1915; }}
@@ -275,6 +354,11 @@ def _layout(title: str, body: str, scraping: bool) -> str:
     dt {{ color: #5c564e; font-family: system-ui, sans-serif; font-size: 0.82rem; }}
     dd {{ margin: 0; }}
     .description {{ white-space: pre-wrap; font-family: system-ui, sans-serif; font-size: 0.95rem; }}
+    dialog {{ border: 0; padding: 0; background: transparent; width: min(760px, calc(100% - 24px)); }}
+    dialog article {{ background: #fff; border-radius: 12px; max-height: 80vh; overflow: auto; padding: 16px 18px; border: 1px solid #e4ddd2; }}
+    dialog h3 {{ margin: 16px 0 6px; font-size: 0.95rem; }}
+    dialog pre {{ white-space: pre-wrap; word-break: break-word; font: 12px/1.45 ui-monospace, monospace; background: #f6f1e7; padding: 8px; border-radius: 8px; }}
+    dialog .row {{ display: flex; justify-content: space-between; gap: 12px; align-items: center; }}
     @media (max-width: 860px) {{ .grid, dl {{ grid-template-columns: 1fr; }} }}
   </style>
 </head>
@@ -286,14 +370,26 @@ def _layout(title: str, body: str, scraping: bool) -> str:
 <main>
 {body}
 </main>
+<dialog id="trace">
+  <article>
+    <div class="row"><h2 id="trace-title">What happened</h2><button type="button" class="ghost" id="trace-close">Close</button></div>
+    <div id="trace-body"></div>
+  </article>
+</dialog>
 </body>
 </html>
 """
 
 
-def _jobi_block(waiting: tuple[int, int], ready: bool = True) -> str:
+def _jobi_block(waiting: tuple[int, int], ready: bool = True, unstructured: int = 0) -> str:
     local_waiting, prod_waiting = waiting
     sentence = _waiting_sentence(local_waiting, prod_waiting)
+    if unstructured:
+        if settings.openai_api_key.strip():
+            pending = f"{_num(unstructured)} postings are not structured yet. Scrape again to structure them."
+        else:
+            pending = f"{_num(unstructured)} postings are not structured yet. Scrape again after OPENAI_API_KEY is set."
+        sentence = f"{sentence} {pending}".strip() if sentence else pending
     if not ready:
         sentence = "Run alembic upgrade head before posting to Jobi."
     banner = f"<p class='banner'>{_text(sentence)}</p>" if sentence else ""
@@ -302,7 +398,7 @@ def _jobi_block(waiting: tuple[int, int], ready: bool = True) -> str:
   <div class="section-head"><h2>Post to Jobi</h2></div>
   {banner}
   <form class="picker" method="post" action="/jobi/post">
-    <p class="meta">Companies go first. Jobs stay waiting when Jobi skips the company.</p>
+    <p class="meta">Companies go first. Only structured postings are sent, in the shared job JSON. Jobs stay waiting when Jobi skips the company.</p>
     <label class="pick"><input type="radio" name="target" value="local" checked><span>Local — {_text(BASE_URLS["local"])}. {_num(local_waiting)} new waiting.</span></label>
     <label class="pick"><input type="radio" name="target" value="prod"><span>Prod — {_text(BASE_URLS["prod"])}. {_num(prod_waiting)} new waiting.</span></label>
     <label class="pick"><input type="checkbox" name="publish" value="true"><span>Publish new companies</span></label>
@@ -458,6 +554,7 @@ def _jobs_table(jobs: list) -> str:
         if job.canonical_apply_url and job.canonical_apply_url.startswith(("http://", "https://")):
             href = html.escape(job.canonical_apply_url, quote=True)
             apply = f'<a href="{href}">Apply</a>'
+        trail = f"<button type=\"button\" class=\"ghost\" data-trace-url=\"/postings/{job.id}/trace\">What happened</button>"
         place = ", ".join(part for part in (job.city, job.state) if part)
         rows.append(
             "<tr>"
@@ -466,7 +563,7 @@ def _jobs_table(jobs: list) -> str:
             f"<td>{_text(place)}</td>"
             f"<td>{_text(job.work_mode)}</td>"
             f"<td>{_when(job.posted_at)}</td>"
-            f"<td>{apply}</td>"
+            f"<td>{apply} {trail}</td>"
             "</tr>"
         )
     return (
@@ -483,6 +580,7 @@ def _detail(job: Job) -> str:
     if job.canonical_apply_url and job.canonical_apply_url.startswith(("http://", "https://")):
         href = html.escape(job.canonical_apply_url, quote=True)
         apply = f'<a class="button" href="{href}">Apply</a>'
+    trail = f"<button type=\"button\" class=\"ghost\" data-trace-url=\"/postings/{job.id}/trace\">What happened</button>"
     description = _text(job.description_text) if job.description_text else "No description stored."
     source = ""
     if job.canonical_source is not None:
@@ -500,6 +598,7 @@ def _detail(job: Job) -> str:
         ("Skills", _text(skills)),
         ("Source", source),
         ("Last seen", _when(job.last_seen_at)),
+        ("Structure", _text(job.structure_status)),
     ]
     facts = "".join(f"<dt>{label}</dt><dd>{value or '—'}</dd>" for label, value in rows)
     back = "/?" + urlencode({"company": job.company_name}) if job.company_name else "/"
@@ -507,8 +606,13 @@ def _detail(job: Job) -> str:
 <p><a href="{html.escape(back, quote=True)}">Back to postings</a></p>
 <article class="card">
   <h2>{_text(job.title_original)}</h2>
-  <p>{apply}</p>
+  <p>{apply} {trail}</p>
+  {_summary_block(job.summary)}
   <dl>{facts}</dl>
+  {_bullets("Responsibilities", job.responsibilities)}
+  {_bullets("Requirements", job.requirements)}
+  {_bullets("Nice to have", job.nice_to_have)}
+  {_bullets("Benefits", job.benefits)}
   <h2>Description</h2>
   <div class="description">{description}</div>
 </article>
@@ -529,6 +633,22 @@ def _failures_table(failures: list) -> str:
         "<table><thead><tr><th>Source</th><th>When</th><th>Error</th></tr></thead>"
         f"<tbody>{''.join(rows)}</tbody></table>"
     )
+
+
+def _summary_block(summary: str | None) -> str:
+    text = _text(summary)
+    if not text:
+        return ""
+    return f"<p>{text}</p>"
+
+
+def _bullets(title: str, items: object) -> str:
+    if not isinstance(items, list):
+        return ""
+    rows = "".join(f"<li>{_text(item)}</li>" for item in items if str(item).strip())
+    if not rows:
+        return ""
+    return f"<h2>{_text(title)}</h2><ul>{rows}</ul>"
 
 
 def _experience(low: object, high: object) -> str:

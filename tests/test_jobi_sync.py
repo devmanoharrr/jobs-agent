@@ -102,11 +102,20 @@ def test_transfer_posts_companies_before_jobs_and_keeps_skipped_waiting(monkeypa
             jobs = json.loads(respx.calls[1].request.content)["jobs"]
             assert jobs[0]["external_key"] == fingerprint
             assert jobs[0]["company_external_key"] == "stellar labs"
+            assert jobs[0]["company_name"] == "Stellar Labs"
+            assert jobs[0]["title"] == "Backend Engineer"
             assert jobs[0]["apply_url"] == "https://boards.example/jobs/123"
             assert jobs[0]["work_mode"] == "hybrid"
+            assert jobs[0]["employment_type"] == "full_time"
             assert jobs[0]["salary_min"] == 800000
             assert jobs[0]["salary_max"] == 1600000.5
+            assert jobs[0]["salary_currency"] == "INR"
+            assert jobs[0]["salary_period"] == "year"
             assert jobs[0]["posted_at"] == "2026-09-28T10:00:00Z"
+            assert jobs[0]["description_text"] == "Full description text"
+            assert jobs[0]["responsibilities"] == []
+            assert "description" not in jobs[0]
+            assert "<" not in json.dumps(jobs[0])
             reconcile = json.loads(respx.calls[2].request.content)
             assert reconcile == {"active_external_keys": [fingerprint]}
         assert "skipped 1 (company_not_found 1)" in message
@@ -167,6 +176,17 @@ def test_dashboard_offers_local_or_prod_posting() -> None:
     assert "alembic upgrade head" in missing
 
 
+def test_unstructured_banner_mentions_the_key_only_when_it_is_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, "openai_api_key", "")
+    missing = _jobi_block((0, 0), unstructured=340)
+    assert "340 postings are not structured yet. Scrape again after OPENAI_API_KEY is set." in missing
+
+    monkeypatch.setattr(settings, "openai_api_key", "sk-test")
+    present = _jobi_block((0, 0), unstructured=340)
+    assert "340 postings are not structured yet. Scrape again to structure them." in present
+    assert "OPENAI_API_KEY" not in present
+
+
 def test_post_button_reports_the_transfer(monkeypatch: pytest.MonkeyPatch) -> None:
     def fake(session, *, target: str, publish: bool) -> str:
         assert target == "prod"
@@ -222,7 +242,56 @@ def _job(**overrides: object) -> Job:
         "canonical_apply_url": "https://boards.example/jobs/123",
     }
     fields.update(overrides)
-    return Job(**fields)
+    job = Job(**fields)
+    if "structure_status" not in overrides and job.india_relevance in {"india", "remote_india"} and job.canonical_apply_url:
+        job.structure_status = "ready"
+        job.structured_payload = _sendable(job)
+    return job
+
+
+def _sendable(job: Job) -> dict:
+    payload: dict[str, object] = {
+        "external_key": job.exact_fingerprint,
+        "company_external_key": job.company_normalized,
+        "company_name": job.company_name,
+        "title": job.title_original,
+        "summary": None,
+        "description_text": job.description_text,
+        "role_category": None,
+        "skills": [],
+        "country_code": job.country_code or "IN",
+        "experience_min_years": None,
+        "experience_label": None,
+        "apply_url": job.canonical_apply_url,
+        "responsibilities": [],
+        "requirements": [],
+        "nice_to_have": [],
+        "benefits": [],
+    }
+    if job.city:
+        payload["city"] = job.city
+    if job.state:
+        payload["state"] = job.state
+    if job.work_mode:
+        payload["work_mode"] = job.work_mode
+    if job.employment_type:
+        payload["employment_type"] = job.employment_type
+    if job.posted_at is not None:
+        payload["posted_at"] = job.posted_at.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    if job.salary_min is not None:
+        payload["salary_min"] = _amount(job.salary_min)
+        payload["salary_currency"] = "INR"
+        payload["salary_period"] = "year"
+    if job.salary_max is not None:
+        payload["salary_max"] = _amount(job.salary_max)
+    return payload
+
+
+def _amount(value: Decimal) -> int | float:
+    number = float(value)
+    if number.is_integer():
+        return int(number)
+    return number
 
 
 def _cleanup(session, fingerprints: list[str]) -> None:

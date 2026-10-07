@@ -24,6 +24,7 @@ from app.pipeline.dedupe import (
     source_rank,
 )
 from app.pipeline.enrichment import enrich_job
+from app.pipeline.structure import structure_posting
 from app.pipeline.india_filter import IndiaRelevance, classify_india
 from app.pipeline.normalize import normalize_company, normalize_title, normalize_url
 from app.pipeline.raw_store import normalize_raw
@@ -74,6 +75,8 @@ def publish_candidate(
     raw_row.processing_error = None
     session.flush()
     _enrich_unknown(session, job, relevance, checked_at)
+    if relevance in {IndiaRelevance.INDIA, IndiaRelevance.REMOTE_INDIA}:
+        structure_posting(session, job, raw_row, source, checked_at=checked_at)
     return "created" if created else "updated"
 
 

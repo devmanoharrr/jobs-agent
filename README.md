@@ -18,10 +18,10 @@ pip install -e .
 cp .env.example .env
 docker compose up -d
 alembic upgrade head
-uvicorn app.main:app --reload
+uvicorn app.main:app --reload --host 127.0.0.1 --port 8010
 ```
 
-Then open `http://127.0.0.1:8000/` for the demo page, or `http://127.0.0.1:8000/health`. A healthy process returns:
+Then open `http://127.0.0.1:8010/` for the demo page, or `http://127.0.0.1:8010/health`. A healthy process returns:
 
 ```json
 {"status": "ok", "database": "ok"}

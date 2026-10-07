@@ -55,6 +55,30 @@ class Job(Base):
     salary_min: Mapped[Decimal | None] = mapped_column(Numeric)
     salary_max: Mapped[Decimal | None] = mapped_column(Numeric)
     salary_currency: Mapped[str | None] = mapped_column(Text)
+    salary_period: Mapped[str | None] = mapped_column(Text)
+    summary: Mapped[str | None] = mapped_column(Text)
+    role_category: Mapped[str | None] = mapped_column(Text)
+    experience_label: Mapped[str | None] = mapped_column(Text)
+    responsibilities: Mapped[list[Any]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
+    requirements: Mapped[list[Any]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
+    nice_to_have: Mapped[list[Any]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
+    benefits: Mapped[list[Any]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
+    structured_payload: Mapped[dict | None] = mapped_column(JSONB)
+    pipeline_trace: Mapped[list[Any]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
+    structure_status: Mapped[str] = mapped_column(
+        Text, nullable=False, default="pending", server_default=text("'pending'")
+    )
+    structure_hash: Mapped[str | None] = mapped_column(Text)
     skills: Mapped[list[Any]] = mapped_column(
         JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
     )

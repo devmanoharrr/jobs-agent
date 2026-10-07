@@ -11,16 +11,16 @@ import threading
 from collections import Counter
 from collections.abc import Iterable, Sequence
 from datetime import datetime, timezone
-from decimal import Decimal
 
 import httpx
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.models.job import Job
 from app.models.jobi_sync import JobiSync
+from app.pipeline.structure import scrub_payload
 
 TARGETS = ("local", "prod")
 BASE_URLS = {
@@ -54,6 +54,23 @@ def waiting_count(session: Session, target: str) -> int:
     except ProgrammingError:
         session.rollback()
         return 0
+
+
+def unstructured_count(session: Session) -> int:
+    try:
+        total = session.scalar(
+            select(func.count())
+            .select_from(Job)
+            .where(
+                Job.status == "active",
+                Job.india_relevance.in_(_PUBLISHED),
+                Job.structure_status != "ready",
+            )
+        )
+    except ProgrammingError:
+        session.rollback()
+        return 0
+    return int(total or 0)
 
 
 def sync_table_ready(session: Session) -> bool:
@@ -148,15 +165,19 @@ def _post_jobs(
 ) -> dict[str, int]:
     counts = _empty_counts()
     now = datetime.now(timezone.utc)
-    payloads = [_job_payload(job) for job in _deduped(waiting)]
+    chosen = _deduped(waiting)
+    payloads = [_job_payload(job) for job in chosen]
+    by_key = {job.exact_fingerprint: job for job in chosen}
     for chunk in _chunks(payloads, _BATCH):
         results = _results(client, f"{base_url}/internal/job-postings", {"jobs": chunk}, chunk)
         _add_counts(counts, results)
-        accepted = [
-            row["external_key"]
-            for row, result in zip(chunk, results, strict=True)
-            if result.get("action") in {"created", "updated"}
-        ]
+        accepted = []
+        for row, result in zip(chunk, results, strict=True):
+            if result.get("action") in {"created", "updated"}:
+                accepted.append(row["external_key"])
+            job = by_key.get(row.get("external_key"))
+            if job is not None:
+                _record_sent(session, job, target, row, result, now)
         _remember(session, target, accepted, now)
         session.commit()
     return counts
@@ -214,14 +235,16 @@ def _postable(session: Session) -> list[Job]:
 
 
 def _can_send(job: Job) -> bool:
-    title = job.title_original.strip()
-    company = job.company_name.strip()
-    key = job.company_normalized.strip()
-    fingerprint = job.exact_fingerprint.strip()
-    url = (job.canonical_apply_url or "").strip()
-    if not title or not company or not key or not fingerprint:
+    if job.structure_status != "ready" or not isinstance(job.structured_payload, dict):
         return False
-    if len(key) > 255 or len(fingerprint) > 255 or len(url) > 500:
+    payload = job.structured_payload
+    title = str(payload.get("title") or "").strip()
+    company = str(payload.get("company_external_key") or payload.get("company_name") or "").strip()
+    fingerprint = str(payload.get("external_key") or "").strip()
+    url = str(payload.get("apply_url") or "").strip()
+    if not title or not company or not fingerprint:
+        return False
+    if fingerprint != job.exact_fingerprint or len(fingerprint) > 255 or len(url) > 500:
         return False
     return url.startswith(("http://", "https://"))
 
@@ -256,31 +279,34 @@ def _company_payloads(waiting: Sequence[Job], publish: bool) -> list[dict]:
 
 
 def _job_payload(job: Job) -> dict:
-    payload: dict = {
-        "external_key": job.exact_fingerprint,
-        "company_external_key": job.company_normalized,
-        "company_name": job.company_name.strip(),
-        "title": job.title_original.strip(),
-        "apply_url": (job.canonical_apply_url or "").strip(),
-    }
-    if job.description_text and job.description_text.strip():
-        payload["description"] = job.description_text
-    for field, value in (
-        ("city", job.city),
-        ("state", job.state),
-        ("country_code", job.country_code),
-        ("work_mode", job.work_mode),
-        ("employment_type", job.employment_type),
-    ):
-        if value and str(value).strip():
-            payload[field] = str(value).strip()
-    if job.salary_min is not None:
-        payload["salary_min"] = _number(job.salary_min)
-    if job.salary_max is not None:
-        payload["salary_max"] = _number(job.salary_max)
-    if job.posted_at is not None:
-        payload["posted_at"] = job.posted_at.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    return payload
+    payload = job.structured_payload if isinstance(job.structured_payload, dict) else {}
+    return scrub_payload(dict(payload))
+
+
+def _record_sent(
+    session: Session,
+    job: Job,
+    target: str,
+    payload: dict,
+    result: dict,
+    now: datetime,
+) -> None:
+    if job.id is None:
+        return
+    stored = session.get(Job, job.id)
+    if stored is None:
+        return
+    trace = [dict(item) for item in (stored.pipeline_trace or []) if isinstance(item, dict)]
+    trace.append(
+        {
+            "step": "sent",
+            "at": now.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "target": target,
+            "request": payload,
+            "result": result,
+        }
+    )
+    stored.pipeline_trace = trace
 
 
 def _deduped(waiting: Sequence[Job]) -> list[Job]:
@@ -299,13 +325,6 @@ def _location(job: Job) -> str | None:
     if not parts:
         return None
     return ", ".join(parts)[:180]
-
-
-def _number(value: Decimal) -> int | float:
-    number = float(value)
-    if number.is_integer():
-        return int(number)
-    return number
 
 
 def _synced_keys(session: Session, target: str) -> set[str]:

@@ -37,6 +37,8 @@ def test_india_posting_is_published_once() -> None:
         assert jobs[0].state == "Karnataka"
         assert jobs[0].country_code == "IN"
         assert jobs[0].status == "active"
+        assert jobs[0].structure_status == "pending"
+        assert jobs[0].pipeline_trace[0]["step"] == "fetched"
         assert jobs[0].last_seen_at == LATER
         assert session.scalar(select(func.count()).select_from(JobSource).where(JobSource.job_id == jobs[0].id)) == 1
         assert raw.processing_status == "processed"
